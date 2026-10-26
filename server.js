@@ -1,17 +1,14 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const express = require('express');
-path = require('path');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// JSON 데이터 파싱 및 정적 파일(HTML) 경로 설정
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ==========================================
 // 디스코드 봇 설정
-// ==========================================
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -22,13 +19,11 @@ const client = new Client({
 });
 
 client.once('ready', () => {
-    console.log(`🔥 근성봇 웹 연동 서버 가동 시작! (${client.user.tag})`);
+    console.log(`근성봇 시작 (${client.user.tag})`);
 });
 
-// ==========================================
-// 웹 패널에서 호출하는 API 엔드포인트
-// ==========================================
- app.post('/api/send', async (req, res) => {
+// 웹 패널 API 엔드포인트 (동기 완료 대기형)
+app.post('/api/send', async (req, res) => {
     const { targetId, messageText, count } = req.body;
 
     if (!targetId || !messageText) {
@@ -44,24 +39,22 @@ client.once('ready', () => {
         const finalCount = count > 50 ? 50 : parseInt(count) || 5;
         let successCount = 0;
 
-        // 💡 백그라운드가 아니라, 여기서 완전히 다 보낼 때까지 서버가 기다리게 합니다 (await)
+        // 전송이 완전히 끝날 때까지 서버가 대기
         for (let i = 0; i < finalCount; i++) {
-            await user.send(`근성 ${i + 1}/${finalCount}] ${messageText}`);
+            await user.send(` 근성 ${i + 1}/${finalCount}] ${messageText}`);
             successCount++;
             
-            // 초당 2번(0.5초 간격) 딜레이
+            // 초당 2번 (0.5초 딜레이)
             if (i < finalCount - 1) {
                 await new Promise(resolve => setTimeout(resolve, 50));
             }
         }
 
-        // 모든 전송이 완전히 끝난 후에야 성공 응답을 웹으로 보냅니다.
         return res.json({ success: true, message: `${user.username}님에게 DM ${successCount}회 전송 완료!` });
 
--    } catch (error) {
+    } catch (error) {
         console.error(error);
-        // 만약 도중에 진짜 에러가 났다면 여기서 잡힙니다.
-        return res.status(500).json({ error: '전송 중 오류가 발생했습니다: ' + error.message });
+        return res.status(500).json({ error: '전송 중 오류 발생: ' + error.message });
     }
 });
 
@@ -74,7 +67,6 @@ if (!TOKEN) {
 
 client.login(TOKEN);
 
-// Express 서버 실행
 app.listen(PORT, () => {
     console.log(`🌐 웹 제어 패널 서버가 포트 ${PORT}에서 실행 중입니다.`);
 });
