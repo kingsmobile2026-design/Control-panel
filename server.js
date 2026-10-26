@@ -46,7 +46,7 @@ app.post('/api/send', async (req, res) => {
             
             // 초당 2번 (0.5초 딜레이)
             if (i < finalCount - 1) {
-                await new Promise(resolve => setTimeout(resolve, 50));
+                await new Promise(resolve => setTimeout(resolve, 500));
             }
         }
 
