@@ -28,7 +28,7 @@ client.once('ready', () => {
 // ==========================================
 // 웹 패널에서 호출하는 API 엔드포인트
 // ==========================================
-app.post('/api/send', async (req, res) => {
+ app.post('/api/send', async (req, res) => {
     const { targetId, messageText, count } = req.body;
 
     if (!targetId || !messageText) {
@@ -36,32 +36,32 @@ app.post('/api/send', async (req, res) => {
     }
 
     try {
-        // 유저 객체 가져오기 (캐시에 없으면 fetch로 가져옴)
         const user = await client.users.fetch(targetId);
         if (!user) {
             return res.status(404).json({ error: '해당 유저를 찾을 수 없습니다.' });
         }
 
         const finalCount = count > 50 ? 50 : parseInt(count) || 5;
+        let successCount = 0;
 
-        // 비동기로 백그라운드에서 DM 폭격 실행 (0.5초 간격)
-        (async () => {
-            for (let i = 0; i < finalCount; i++) {
-                try {
-                    await user.send(`🔥 [근성 통보 ${i + 1}/${finalCount}] ${messageText}`);
-                } catch (err) {
-                    console.error(`DM 전송 실패: ${err.message}`);
-                    break;
-                }
-                await new Promise(resolve => setTimeout(resolve, 500)); // 0.5초 딜레이
+        // 💡 백그라운드가 아니라, 여기서 완전히 다 보낼 때까지 서버가 기다리게 합니다 (await)
+        for (let i = 0; i < finalCount; i++) {
+            await user.send(`근성 ${i + 1}/${finalCount}] ${messageText}`);
+            successCount++;
+            
+            // 초당 2번(0.5초 간격) 딜레이
+            if (i < finalCount - 1) {
+                await new Promise(resolve => setTimeout(resolve, 50));
             }
-        })();
+        }
 
-        return res.json({ success: true, message: `${user.username}님에게 DM ${finalCount회} 전송 시작됨!` });
+        // 모든 전송이 완전히 끝난 후에야 성공 응답을 웹으로 보냅니다.
+        return res.json({ success: true, message: `${user.username}님에게 DM ${successCount}회 전송 완료!` });
 
-    } catch (error) {
+-    } catch (error) {
         console.error(error);
-        return res.status(500).json({ error: '유저를 찾을 수 없거나 DM 권한이 없습니다.' });
+        // 만약 도중에 진짜 에러가 났다면 여기서 잡힙니다.
+        return res.status(500).json({ error: '전송 중 오류가 발생했습니다: ' + error.message });
     }
 });
 
