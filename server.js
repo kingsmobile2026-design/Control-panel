@@ -24,6 +24,9 @@ const client = new Client({
 // 진행 중인 작업 관리 (유저 ID별)
 const activeTasks = new Map();
 
+// 🤐 여물기 당한 유저들을 관리하는 Set (유저 ID 저장)
+const mutedUsers = new Set();
+
 // 🔑 인증된 사용자 관리용 Set (관리자 ID는 기본 포함)
 const ADMIN_ID = '1510598626718781500';
 const authorizedUsers = new Set([ADMIN_ID]);
@@ -34,24 +37,33 @@ client.once('ready', () => {
 });
 
 client.on('messageCreate', async (message) => {
+    // 🤐 [여물기 감지 시스템] 봇이 아닌 일반 유저가 보낸 메시지 중 여물기 대상이 있다면 즉시 삭제
+    if (!message.author.bot && mutedUsers.has(message.author.id)) {
+        try {
+            await message.delete();
+        } catch (e) {
+            // 권한 부족 등으로 삭제 실패 시 무시
+        }
+        return; // 삭제된 메시지는 명령어 등으로 처리되지 않도록 차단
+    }
+
     if (message.author.bot || !message.content.startsWith('!')) return;
 
     const args = message.content.slice(1).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    // 📌 유효한 명령어 리스트 정의 (오타/없는 명령어 감지용)
-    const validCommands = ['명령어', '사용자id', '근성', '서버근성', '중지', '인증', '강제중지'];
+    // 📌 유효한 명령어 리스트 정의
+    const validCommands = ['명령어', '사용자id', '근성', '서버근성', '중지', '인증', '강제중지', '여물기'];
 
-    // 0️⃣ 등록되지 않은 명령어를 입력했을 때 (!아아 등)
+    // 0️⃣ 등록되지 않은 명령어를 입력했을 때
     if (!validCommands.includes(command)) {
         return message.reply("제대로된 명령어 입력해주세요");
     }
 
-    // 🔑 권한 체크 (인증된 유저 혹은 관리자만 사용 가능)
+    // 🔑 권한 체크
     const isManager = (message.author.id === ADMIN_ID);
     const isAuthorized = authorizedUsers.has(message.author.id);
 
-    // 명령어별 권한 검사 (명령어 패널과 인증 확인은 누구나 볼 수 있게 허용, 나머지는 인증 필수)
     const openCommands = ['명령어', '사용자id'];
     if (!openCommands.includes(command) && !isAuthorized) {
         return message.reply("관리자에게 권한요청 하세요 스레기야");
@@ -62,17 +74,18 @@ client.on('messageCreate', async (message) => {
         return message.channel.send(
             "**[근성봇 명령어 패널]**\n\n" +
             "**1. 사용자 ID 확인**\n" +
-            "`!사용자id @유저멘션`\n" +
-            "👉 해당 유저의 고유 ID를 본인의 DM으로 안전하게 보내드립니다.\n\n" +
-            "**2. DM 근성 폭격 (최대 100회, 0.3초, 미디어 지원)**\n" +
+            "`!사용자id @유저멘션`\n\n" +
+            "**2. DM 근성 폭격**\n" +
             "`!근성 [유저ID] [횟수] [보낼메세지]`\n\n" +
             "**3. 서버 채널 근성 폭격**\n" +
             "`!서버근성 [횟수] [보낼메세지]`\n\n" +
-            "**4. 중지하기**\n" +
-            "`!중지` : 진행 중인 본인의 폭격 작업을 멈춥니다.\n\n" +
-            "**5. 관리자 전용 명령어**\n" +
-            "`!인증 @사용자이름` : 해당 유저에게 봇 사용 권한을 부여합니다. (관리자 전용)\n" +
-            "`!강제중지` : 모든 유저의 진행 중인 폭격을 강제로 중지합니다. (관리자 전용)"
+            "**4. 여물기 (인증 유저 이상 가능)**\n" +
+            "`!여물기 @유저멘션` : 해당 유저가 치는 모든 채팅을 실시간으로 자동 삭제합니다.\n\n" +
+            "**5. 중지하기**\n" +
+            "`!중지` : 본인의 폭격 작업 및 여물기 상태를 전부 해제합니다.\n\n" +
+            "**6. 관리자 전용 명령어**\n" +
+            "`!인증 @사용자이름` : 봇 사용 권한 부여\n" +
+            "`!강제중지` : 모든 폭격 정지 및 모든 유저 여물기 해제"
         );
     }
 
@@ -91,18 +104,34 @@ client.on('messageCreate', async (message) => {
         return message.channel.send(`✅ <@${targetUser.id}>님이 봇 사용 권한을 승인받았습니다!`);
     }
 
-    // 3️⃣ !강제중지 (관리자 전용)
+    // 3️⃣ !여물기 @유저멘션 (인증 유저 이상 가능)
+    if (command === '여물기') {
+        const targetUser = message.mentions.users.first();
+        if (!targetUser) {
+            return message.reply("⚠️ 여물게 할 유저를 멘션해주세요! 예: `!여물기 @홍길동`");
+        }
+
+        // 관리자는 여물기 대상에서 면제
+        if (targetUser.id === ADMIN_ID) {
+            return message.reply("관리자라서 안돼요 이 버러지야");
+        }
+
+        mutedUsers.add(targetUser.id);
+        return message.channel.send(`🤐 <@${targetUser.id}>님에게 여물기가 적용되었습니다. 앞으로 치는 모든 채팅이 즉시 삭제됩니다.`);
+    }
+
+    // 4️⃣ !강제중지 (관리자 전용)
     if (command === '강제중지') {
         if (!isManager) {
             return message.reply("관리자에게 권한요청 하세요 스레기야");
         }
 
-        // 실행 중인 모든 작업 끄기
         activeTasks.clear();
-        return message.channel.send("🛑 **[관리자 권한]** 서버에서 진행 중인 모든 근성 폭격 작업이 강제로 중지되었습니다!");
+        mutedUsers.clear(); // 👈 강제중지 시 모든 여물기 상태도 해제
+        return message.channel.send("🛑 **[관리자 권한]** 모든 폭격 작업이 중지되었고, 모든 유저의 여물기가 해제되었습니다!");
     }
 
-    // 4️⃣ !사용자id @유저
+    // 5️⃣ !사용자id @유저
     if (command === '사용자id') {
         const targetUser = message.mentions.users.first();
         if (!targetUser) {
@@ -122,7 +151,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 5️⃣ !근성 [유저ID] [횟수] [메시지]
+    // 6️⃣ !근성 [유저ID] [횟수] [메시지]
     if (command === '근성') {
         const targetId = args[0];
         const count = parseInt(args[1]);
@@ -130,6 +159,11 @@ client.on('messageCreate', async (message) => {
 
         if (!targetId || isNaN(count)) {
             return message.reply("형식이 잘못되었습니다! 예시: `!근성 123456789012345678 50 파이팅!`");
+        }
+
+        // 🛡️ [관리자 저격 방지 체크] 일반 인증 유저가 관리자를 타겟으로 잡을 경우 차단
+        if (!isManager && targetId === ADMIN_ID) {
+            return message.reply("관리자라서 안돼요 이 버러지야");
         }
 
         const taskKey = message.author.id;
@@ -150,12 +184,11 @@ client.on('messageCreate', async (message) => {
             const user = await client.users.fetch(targetId);
             if (!user) {
                 await message.channel.send("해당 유저를 찾을 수 없습니다.");
-                activeTasks.set(taskKey, false);
+                activeTasks.delete(taskKey);
                 return;
             }
 
             for (let i = 0; i < finalCount; i++) {
-                // 강제 중지나 일반 중지 체크
                 if (!activeTasks.has(taskKey) || !activeTasks.get(taskKey)) {
                     break;
                 }
@@ -190,7 +223,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 6️⃣ !서버근성 [횟수] [메시지]
+    // 7️⃣ !서버근성 [횟수] [메시지]
     if (command === '서버근성') {
         const count = parseInt(args[0]);
         const messageText = args.slice(1).join(' ');
@@ -244,14 +277,26 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 7️⃣ !중지
+    // 8️⃣ !중지 (본인 폭격 중지 + 본인이 건 여물기 해제)
     if (command === '중지') {
-        const taskKey = message.author.id;
-        if (activeTasks.has(taskKey)) {
-            activeTasks.delete(taskKey);
-            return message.reply("진행 중인 본인의 작업을 중지합니다.");
+        const userId = message.author.id;
+        let actionTaken = false;
+
+        if (activeTasks.has(userId)) {
+            activeTasks.delete(userId);
+            actionTaken = true;
+        }
+
+        // 여물기 해제 기능 포함
+        if (mutedUsers.has(userId)) {
+            mutedUsers.delete(userId);
+            actionTaken = true;
+        }
+
+        if (actionTaken) {
+            return message.reply("진행 중인 본인의 작업 및 여물기 상태가 해제되었습니다.");
         } else {
-            return message.reply("현재 실행 중인 본인의 작업이 없습니다.");
+            return message.reply("현재 실행 중인 본인의 작업이나 적용된 상태가 없습니다.");
         }
     }
 });
