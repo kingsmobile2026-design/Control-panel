@@ -41,10 +41,8 @@ client.on('messageCreate', async (message) => {
     if (!message.author.bot && mutedUsers.has(message.author.id)) {
         try {
             await message.delete();
-        } catch (e) {
-            // 권한 부족 등으로 삭제 실패 시 무시
-        }
-        return; // 삭제된 메시지는 명령어 등으로 처리되지 않도록 차단
+        } catch (e) {}
+        return;
     }
 
     if (message.author.bot || !message.content.startsWith('!')) return;
@@ -53,7 +51,7 @@ client.on('messageCreate', async (message) => {
     const command = args.shift().toLowerCase();
 
     // 📌 유효한 명령어 리스트 정의
-    const validCommands = ['명령어', '사용자id', '근성', '서버근성', '중지', '인증', '강제중지', '여물기'];
+    const validCommands = ['명령어', '사용자id', '근성', '서버근성', '중지', '인증', '인증해제', '강제중지', '여물기', '메세지삭제'];
 
     // 0️⃣ 등록되지 않은 명령어를 입력했을 때
     if (!validCommands.includes(command)) {
@@ -79,12 +77,15 @@ client.on('messageCreate', async (message) => {
             "`!근성 [유저ID] [횟수] [보낼메세지]`\n\n" +
             "**3. 서버 채널 근성 폭격**\n" +
             "`!서버근성 [횟수] [보낼메세지]`\n\n" +
-            "**4. 여물기 (인증 유저 이상 가능)**\n" +
-            "`!여물기 @유저멘션` : 해당 유저가 치는 모든 채팅을 실시간으로 자동 삭제합니다.\n\n" +
-            "**5. 중지하기**\n" +
+            "**4. 여물기**\n" +
+            "`!여물기 @유저멘션` : 해당 유저가 치는 모든 채팅을 실시간 자동 삭제합니다.\n\n" +
+            "**5. 특정 유저 메시지 최신순 골라 삭제 (현재 채널 전용)**\n" +
+            "`!메세지삭제 @유저멘션 [삭제할갯수]` : 이 채널에서 타겟 유저가 쓴 메시지를 **가장 최신순**으로 지정한 수만큼 삭제합니다.\n\n" +
+            "**6. 중지하기**\n" +
             "`!중지` : 본인의 폭격 작업 및 여물기 상태를 전부 해제합니다.\n\n" +
-            "**6. 관리자 전용 명령어**\n" +
+            "**7. 관리자 전용 명령어**\n" +
             "`!인증 @사용자이름` : 봇 사용 권한 부여\n" +
+            "`!인증해제 @사용자이름` : 봇 사용 권한 박탈\n" +
             "`!강제중지` : 모든 폭격 정지 및 모든 유저 여물기 해제"
         );
     }
@@ -104,14 +105,72 @@ client.on('messageCreate', async (message) => {
         return message.channel.send(`✅ <@${targetUser.id}>님이 봇 사용 권한을 승인받았습니다!`);
     }
 
-    // 3️⃣ !여물기 @유저멘션 (인증 유저 이상 가능)
+    // 3️⃣ !인증해제 @사용자이름 (관리자 전용)
+    if (command === '인증해제') {
+        if (!isManager) {
+            return message.reply("관리자에게 권한요청 하세요 스레기야");
+        }
+
+        const targetUser = message.mentions.users.first();
+        if (!targetUser) {
+            return message.reply("⚠️ 권한을 해제할 유저를 멘션해주세요! 예: `!인증해제 @홍길동`");
+        }
+
+        if (targetUser.id === ADMIN_ID) {
+            return message.reply("관리자의 인증은 해제할 수 없습니다.");
+        }
+
+        authorizedUsers.delete(targetUser.id);
+        return message.channel.send(`🚫 <@${targetUser.id}>님의 봇 사용 권한이 박탈되었습니다.`);
+    }
+
+    // 4️⃣ !메세지삭제 @유저멘션 [삭제할갯수] (현재 채널에서만, 가장 최신순)
+    if (command === '메세지삭제') {
+        const targetUser = message.mentions.users.first();
+        const deleteCount = parseInt(args[1]);
+
+        if (!targetUser || isNaN(deleteCount) || deleteCount <= 0) {
+            return message.reply("⚠️ 형식이 잘못되었습니다! 예시: `!메세지삭제 @홍길동 10`");
+        }
+
+        const maxDelete = deleteCount > 100 ? 100 : deleteCount;
+        await message.reply(`🧹 현재 채널에서 <@${targetUser.id}>님의 메시지를 가장 최신순으로 최대 ${maxDelete}개 탐색 및 삭제 중입니다...`);
+
+        try {
+            // 명령어를 입력한 현재 채널의 최근 메시지 100개 가져오기
+            const fetchedMessages = await message.channel.messages.fetch({ limit: 100 });
+            
+            // 타겟 유저가 현재 채널에 쓴 메시지만 필터링 (최신순 정렬 유지)
+            const targetMessages = fetchedMessages.filter(msg => msg.author.id === targetUser.id);
+
+            let deletedSoFar = 0;
+            // 위에서부터(가장 최신순) 순서대로 삭제 진행
+            for (const msg of targetMessages.values()) {
+                if (deletedSoFar >= maxDelete) break;
+                try {
+                    await msg.delete();
+                    deletedSoFar++;
+                    // API 제한 방지 딜레이
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                } catch (err) {
+                    // 이미 삭제되었거나 권한 부족 시 패스
+                }
+            }
+
+            await message.channel.send(`✅ 현재 채널에서 <@${targetUser.id}>님의 메시지 총 ${deletedSoFar}개가 가장 최신순으로 삭제되었습니다.`);
+        } catch (error) {
+            await message.channel.send(`❌ 메시지 삭제 중 오류 발생: ${error.message}`);
+        }
+        return;
+    }
+
+    // 5️⃣ !여물기 @유저멘션
     if (command === '여물기') {
         const targetUser = message.mentions.users.first();
         if (!targetUser) {
             return message.reply("⚠️ 여물게 할 유저를 멘션해주세요! 예: `!여물기 @홍길동`");
         }
 
-        // 관리자는 여물기 대상에서 면제
         if (targetUser.id === ADMIN_ID) {
             return message.reply("관리자라서 안돼요 이 버러지야");
         }
@@ -120,18 +179,18 @@ client.on('messageCreate', async (message) => {
         return message.channel.send(`🤐 <@${targetUser.id}>님에게 여물기가 적용되었습니다. 앞으로 치는 모든 채팅이 즉시 삭제됩니다.`);
     }
 
-    // 4️⃣ !강제중지 (관리자 전용)
+    // 6️⃣ !강제중지 (관리자 전용)
     if (command === '강제중지') {
         if (!isManager) {
             return message.reply("관리자에게 권한요청 하세요 스레기야");
         }
 
         activeTasks.clear();
-        mutedUsers.clear(); // 👈 강제중지 시 모든 여물기 상태도 해제
+        mutedUsers.clear();
         return message.channel.send("🛑 **[관리자 권한]** 모든 폭격 작업이 중지되었고, 모든 유저의 여물기가 해제되었습니다!");
     }
 
-    // 5️⃣ !사용자id @유저
+    // 7️⃣ !사용자id @유저
     if (command === '사용자id') {
         const targetUser = message.mentions.users.first();
         if (!targetUser) {
@@ -151,7 +210,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 6️⃣ !근성 [유저ID] [횟수] [메시지]
+    // 8️⃣ !근성 [유저ID] [횟수] [메시지]
     if (command === '근성') {
         const targetId = args[0];
         const count = parseInt(args[1]);
@@ -161,7 +220,6 @@ client.on('messageCreate', async (message) => {
             return message.reply("형식이 잘못되었습니다! 예시: `!근성 123456789012345678 50 파이팅!`");
         }
 
-        // 🛡️ [관리자 저격 방지 체크] 일반 인증 유저가 관리자를 타겟으로 잡을 경우 차단
         if (!isManager && targetId === ADMIN_ID) {
             return message.reply("관리자라서 안돼요 이 버러지야");
         }
@@ -223,7 +281,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 7️⃣ !서버근성 [횟수] [메시지]
+    // 9️⃣ !서버근성 [횟수] [메시지]
     if (command === '서버근성') {
         const count = parseInt(args[0]);
         const messageText = args.slice(1).join(' ');
@@ -277,7 +335,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 8️⃣ !중지 (본인 폭격 중지 + 본인이 건 여물기 해제)
+    // 🔟 !중지
     if (command === '중지') {
         const userId = message.author.id;
         let actionTaken = false;
@@ -287,7 +345,6 @@ client.on('messageCreate', async (message) => {
             actionTaken = true;
         }
 
-        // 여물기 해제 기능 포함
         if (mutedUsers.has(userId)) {
             mutedUsers.delete(userId);
             actionTaken = true;
